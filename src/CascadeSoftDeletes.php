@@ -87,6 +87,12 @@ trait CascadeSoftDeletes
         $delete = $this->forceDeleting ? 'forceDelete' : 'delete';
 
         $cb = function ($model) use ($delete) {
+            // If the model has the activity log trait, we will set the activity log options
+            // on the model so that we can log the activity of the deletion.
+            if (method_exists($model, 'getActivityLogOptions')) {
+                $model->activityLogOptions = $model->getActivityLogOptions();
+            }
+
             isset($model->pivot) ? $model->pivot->{$delete}() : $model->{$delete}();
         };
 
