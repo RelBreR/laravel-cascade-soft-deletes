@@ -1,5 +1,5 @@
 {
-    "name": "dyrynda/laravel-cascade-soft-deletes",
+    "name": "relbrer/laravel-cascade-soft-deletes",
     "description": "Cascading deletes for Eloquent models that implement soft deletes",
     "type": "utility",
     "require": {

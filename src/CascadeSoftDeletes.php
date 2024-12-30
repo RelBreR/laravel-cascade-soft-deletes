@@ -7,6 +7,9 @@ use Illuminate\Database\Eloquent\Relations\Relation;
 
 trait CascadeSoftDeletes
 {
+    protected $fetchMethod = 'get'; // get, cursor, lazy or chunk
+    protected $chunkSize = 500;
+
     /**
      * Boot the trait.
      *
@@ -15,12 +18,18 @@ trait CascadeSoftDeletes
      *
      * @throws \LogicException
      */
-    protected static function bootCascadeSoftDeletes()
+    protected static function bootCascadeSoftDeletes(): void
     {
         static::deleting(function ($model) {
             $model->validateCascadingSoftDelete();
 
             $model->runCascadingDeletes();
+        });
+
+        static::restoring(function ($model) {
+            $model->validateCascadingSoftDelete();
+
+            $model->runRestoreCascadingDeletes();
         });
     }
 
@@ -30,7 +39,7 @@ trait CascadeSoftDeletes
      *
      * @throws \Dyrynda\Database\Support\CascadeSoftDeleteException
      */
-    protected function validateCascadingSoftDelete()
+    protected function validateCascadingSoftDelete(): void
     {
         if (! $this->implementsSoftDeletes()) {
             throw CascadeSoftDeleteException::softDeleteNotImplemented(get_called_class());
@@ -47,10 +56,22 @@ trait CascadeSoftDeletes
      *
      * @return void
      */
-    protected function runCascadingDeletes()
+    protected function runCascadingDeletes(): void
     {
         foreach ($this->getActiveCascadingDeletes() as $relationship) {
             $this->cascadeSoftDeletes($relationship);
+        }
+    }
+
+    /**
+     * Run the restore cascading deletes process.
+     *
+     * @return void
+     */
+    protected function runRestoreCascadingDeletes(): void
+    {
+        foreach ($this->getDeletedCascadingDeletes() as $relationship) {
+            $this->cascadeRestores($relationship);
         }
     }
 
@@ -59,14 +80,45 @@ trait CascadeSoftDeletes
      * Cascade delete the given relationship on the given mode.
      *
      * @param  string  $relationship
-     * @return return
+     * @return void
      */
-    protected function cascadeSoftDeletes($relationship)
+    protected function cascadeSoftDeletes($relationship): void
     {
         $delete = $this->forceDeleting ? 'forceDelete' : 'delete';
 
-        foreach ($this->{$relationship}()->get() as $model) {
+        $cb = function ($model) use ($delete) {
             isset($model->pivot) ? $model->pivot->{$delete}() : $model->{$delete}();
+        };
+
+        $this->handleRecords($relationship, $cb);
+    }
+
+
+    private function handleRecords($relationship, $cb): void
+    {
+        $fetchMethod = $this->fetchMethod ?? 'get';
+
+        if ($fetchMethod == 'chunk') {
+            $this->{$relationship}()->chunk($this->chunkSize ?? 500, $cb);
+        } else {
+            foreach ($this->{$relationship}()->$fetchMethod() as $model) {
+                $cb($model);
+            }
+        }
+    }
+
+
+
+    /**
+     * Cascade restores the related models for a given relationship.
+     *
+     * @param string $relationship The name of the relationship.
+     * @return void
+     */
+    protected function cascadeRestores($relationship): void
+    {
+        foreach ($this->{$relationship}()->onlyTrashed()->get() as $model) {
+            $model->restore();
         }
     }
 
@@ -76,7 +128,7 @@ trait CascadeSoftDeletes
      *
      * @return bool
      */
-    protected function implementsSoftDeletes()
+    protected function implementsSoftDeletes(): bool
     {
         return method_exists($this, 'runSoftDelete');
     }
@@ -90,7 +142,7 @@ trait CascadeSoftDeletes
      *
      * @return array
      */
-    protected function hasInvalidCascadingRelationships()
+    protected function hasInvalidCascadingRelationships(): array
     {
         return array_filter($this->getCascadingDeletes(), function ($relationship) {
             return ! method_exists($this, $relationship) || ! $this->{$relationship}() instanceof Relation;
@@ -103,9 +155,21 @@ trait CascadeSoftDeletes
      *
      * @return array
      */
-    protected function getCascadingDeletes()
+    protected function getCascadingDeletes(): array
     {
         return isset($this->cascadeDeletes) ? (array) $this->cascadeDeletes : [];
+    }
+
+
+
+    /**
+     * Retrieves the deleted cascading deletes.
+     *
+     * @return mixed
+     */
+    protected function getDeletedCascadingDeletes(): array
+    {
+        return $this->getCascadingDeletes();
     }
 
 
@@ -114,7 +178,7 @@ trait CascadeSoftDeletes
      *
      * @return array
      */
-    protected function getActiveCascadingDeletes()
+    protected function getActiveCascadingDeletes(): array
     {
         return array_filter($this->getCascadingDeletes(), function ($relationship) {
             return $this->{$relationship}()->exists();
